@@ -4,12 +4,10 @@ Audio-file companion to [ZwickerLoudness.jl](https://github.com/slink/ZwickerLou
 Compute ISO 532-1:2017 Method 1 stationary loudness directly from a `.wav`
 file or a time-domain signal.
 
-> **Status: smoke scaffold.** The third-octave filterbank is currently a
-> simple FFT-power integrator and is **not** IEC 61260 compliant. Numerical
-> conformance against ISO 532-1 Annex B Signals 3 and 4 is deferred to a
-> follow-up that lands a proper IIR filterbank. Use this package now for
-> wiring, exploration, and rough estimates; not yet for certified loudness
-> reporting.
+The third-octave filterbank is a per-band Butterworth bandpass designed per
+ANSI S1.1-1986 (matching the approach used by [MoSQITo](https://github.com/Eomys/MoSQITo)).
+Default order 3 reproduces the published Annex B reference values for the
+three tone signals within ISO 532-1's 5% tolerance.
 
 ## Installation
 
@@ -37,7 +35,7 @@ using Statistics
 fs = 48_000
 t = range(0, 0.5, length=round(Int, 0.5 * fs))
 sig_pa = 2e-5 * 10^(60/20) * sin.(2π * 1000 .* t) * sqrt(2)  # 1 kHz, 60 dB SPL
-loudness_zwst(sig_pa, fs).loudness  # ~3.5 sone (smoke filterbank)
+loudness_zwst(sig_pa, fs).loudness  # ~4.0 sone (ISO Signal 3 reference)
 
 # Per-band SPL diagnostic.
 band_levels(sig_pa, fs)  # 28-element Vector{Float64}, dB re 20 µPa
@@ -52,27 +50,35 @@ already in Pa).
 loudness_zwst(raw_signal, fs; pa_per_unit=0.5)  # signal is half of true Pa
 ```
 
-## Why the IIR filterbank matters
+## Conformance
 
-ISO 532-1 Annex B Signals 2-5 are `.wav` files; the standard validates
-implementations on the full pipeline `wav → IEC 61260 filterbank → band SPL →
-Method 1 kernel`. The smoke FFT integrator here gets band SPL roughly right
-for stationary tones, but it misses real-filterbank effects (passband ripple,
-finite skirt rejection, time-frequency tradeoff) that materially affect mid-
-and high-frequency tones. See `docs/specs/2026-05-28-scaffold-design.md` for
-the planned upgrade path.
+ISO 532-1:2017 Annex B reference values (synthesized in-process; tolerance is
+the standard's ±5%):
+
+| Signal | Stimulus | Reference | Computed |
+|--------|----------|-----------|----------|
+| 2 | 250 Hz tone @ 80 dB SPL | 14.655 sone | ~15.09 sone (+2.9%) |
+| 3 | 1 kHz tone @ 60 dB SPL | 4.019 sone | ~4.16 sone (+3.6%) |
+| 4 | 4 kHz tone @ 40 dB SPL | 1.549 sone | ~1.56 sone (+0.5%) |
+
+Signal 5 (pink noise @ 60 dB SPL, reference 10.498 sone) needs a calibrated
+pink-noise generator to test reproducibly and is deferred.
 
 ## API
 
 ```julia
 loudness_zwst(signal::AbstractVector{<:Real}, fs::Real;
-              field_type=:free, pa_per_unit=1.0) -> ZwickerResult
+              field_type=:free, pa_per_unit=1.0, order=3) -> ZwickerResult
 
 loudness_zwst(path::AbstractString;
-              field_type=:free, pa_per_unit=1.0) -> ZwickerResult
+              field_type=:free, pa_per_unit=1.0, order=3) -> ZwickerResult
 
-band_levels(signal, fs; pa_per_unit=1.0) -> Vector{Float64}  # 28 SPL values
+band_levels(signal, fs; pa_per_unit=1.0, order=3) -> Vector{Float64}  # 28 SPL values
 ```
+
+`order` is the Butterworth filter order per band. Default `3` matches
+MoSQITo. Higher orders give tighter selectivity (less neighbor leakage from
+a tone) at the cost of compute and potential low-band conditioning issues.
 
 ## License
 

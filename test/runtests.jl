@@ -14,7 +14,7 @@ function make_tone(f::Real, fs::Real, dur::Real, level_db::Real)
     return raw .* (rms_target / rms_now)
 end
 
-@testset "ZwickerLoudnessAudio (smoke)" begin
+@testset "ZwickerLoudnessAudio" begin
 
     @testset "band_levels shape and basic correctness" begin
         fs = 48_000
@@ -36,9 +36,8 @@ end
         @test isfinite(r.loudness)
         @test isfinite(r.loudness_level)
         @test length(r.specific_loudness) == 240
-        # Loose plausibility band for 1 kHz at 60 dB SPL (smoke filterbank
-        # under-models leakage and IIR rolloff). Tight conformance comes later.
-        @test 2.0 < r.loudness < 6.0
+        # 1 kHz tone at 60 dB SPL: ISO Signal 3 reference is 4.019 sone.
+        @test isapprox(r.loudness, 4.019; rtol=0.05)
     end
 
     @testset "broadband noise produces non-zero loudness" begin
@@ -67,14 +66,15 @@ end
     end
 
     # ============================================================ #
-    #  Annex B Signals 2-4 reference values come from the .wav files
-    #  in ISO 532-1:2017 Annex B (also distributed by MoSQITo).
+    #  Annex B Signals 2-4 conformance.
     #
-    #  Signal 2 passes with the smoke FFT filterbank somewhat by
-    #  accident (low-/mid-frequency tone, generous ISO tolerance).
-    #  Signals 3 and 4 do not pass and won't until the smoke filterbank
-    #  is replaced by an IEC 61260-compliant IIR filterbank. Marked
-    #  @test_broken so CI flags the day they start passing.
+    #  Reference values come from the .wav files in ISO 532-1:2017
+    #  Annex B (also distributed by MoSQITo). All three pass within
+    #  the ISO 5% tolerance with the order-3 Butterworth filterbank
+    #  designed per ANSI S1.1-1986 (matching MoSQITo's noct_spectrum).
+    #
+    #  Signal 5 (pink noise) needs a calibrated pink-noise generator
+    #  to test reproducibly; deferred.
     # ============================================================ #
     @testset "Annex B Signal 2: 250 Hz @ 80 dB SPL -> ~14.655 sone" begin
         fs = 48_000
@@ -83,18 +83,28 @@ end
         @test isapprox(r.loudness, 14.655; rtol=0.05)
     end
 
-    @testset "Annex B Signal 3: 1 kHz @ 60 dB SPL -> ~4.019 sone (broken)" begin
+    @testset "Annex B Signal 3: 1 kHz @ 60 dB SPL -> ~4.019 sone" begin
         fs = 48_000
         sig = make_tone(1000, fs, 0.5, 60.0)
         r = loudness_zwst(sig, fs)
-        @test_broken isapprox(r.loudness, 4.019; rtol=0.05)
+        @test isapprox(r.loudness, 4.019; rtol=0.05)
     end
 
-    @testset "Annex B Signal 4: 4 kHz @ 40 dB SPL -> ~1.549 sone (broken)" begin
+    @testset "Annex B Signal 4: 4 kHz @ 40 dB SPL -> ~1.549 sone" begin
         fs = 48_000
         sig = make_tone(4000, fs, 0.5, 40.0)
         r = loudness_zwst(sig, fs)
-        @test_broken isapprox(r.loudness, 1.549; rtol=0.05)
+        @test isapprox(r.loudness, 1.549; rtol=0.05)
+    end
+
+    @testset "order kwarg is plumbed through" begin
+        fs = 48_000
+        sig = make_tone(1000, fs, 0.5, 60.0)
+        r3 = loudness_zwst(sig, fs; order=3)
+        r6 = loudness_zwst(sig, fs; order=6)
+        # Higher-order filter has tighter selectivity -> less neighbor leakage
+        # from a tone -> lower spreading contribution -> smaller total loudness.
+        @test r6.loudness < r3.loudness
     end
 
 end
