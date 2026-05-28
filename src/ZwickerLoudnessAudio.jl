@@ -1,6 +1,6 @@
 module ZwickerLoudnessAudio
 
-using FFTW
+using DSP
 using Statistics
 using WAV
 using ZwickerLoudness
@@ -16,103 +16,94 @@ const BAND_CENTERS_HZ = [
   3150.0,  4000.0,  5000.0,  6300.0,  8000.0, 10000.0, 12500.0,
 ]
 
-const _ONE_SIXTH_OCTAVE = 2.0^(1.0/6.0)
-const _P_REF = 2e-5  # Reference acoustic pressure in pascals (20 µPa).
+const _P_REF = 2e-5            # Reference acoustic pressure in pascals (20 µPa).
+const _DEFAULT_ORDER = 3       # Filter order matches MoSQITo / ANSI S1.1-1986 default.
+const _SILENCE_DB = -60.0      # Placeholder for bands above Nyquist or numerically silent.
 
-"""
-    band_levels(signal, fs; pa_per_unit=1.0) -> Vector{Float64}
-
-Compute one-third-octave band SPL [dB re 20 µPa] for `signal` sampled at `fs` Hz.
-Returns 28 values for the standard band centers 25 Hz – 12.5 kHz.
-
-`pa_per_unit` scales the raw signal to pascals (default `1.0` assumes the signal
-is already in Pa).
-
-# Implementation note (smoke)
-
-This is the **smoke-level** filterbank: it FFTs the whole signal (no window,
-no segmentation) and sums power for FFT bins falling inside each band's
-brick-wall edges `[fc / 2^(1/6), fc · 2^(1/6)]`. It is not IEC 61260
-compliant — neighboring-band rejection is overstated and tone leakage is
-under-modeled. Replace with an IIR filterbank for ISO 532-1 Annex B
-conformance against Signals 2-5.
-"""
-function band_levels(signal::AbstractVector{<:Real}, fs::Real; pa_per_unit::Real=1.0)
-    n = length(signal)
-    n == 0 && throw(ArgumentError("signal is empty"))
-    fs > 0 || throw(ArgumentError("fs must be positive"))
-
-    # Convert to pascals.
-    x = Float64.(signal) .* Float64(pa_per_unit)
-
-    # Real FFT → power per positive-frequency bin. Parseval-consistent scaling:
-    # one-sided power spectrum of a real signal.
-    X = rfft(x)
-    nbins = length(X)
-    # |X|^2 / n gives power per bin in (Pa^2 · samples). Divide by fs to get
-    # power spectral density (Pa^2/Hz); equivalently sum |X[k]|^2 * 2 / n^2 to
-    # get mean-square per bin in Pa^2 (one-sided, doubled except DC/Nyquist).
-    psq = abs2.(X)
-    # Convert to mean-square contribution per bin (Pa^2).
-    # For RMS reconstruction over the full positive spectrum (one-sided):
-    #   sum_k contribution_k == mean(x^2)
-    # Use the standard one-sided normalization with DC + Nyquist not doubled.
-    contrib = psq ./ (Float64(n)^2)
-    contrib[2:end] .*= 2.0
-    # Nyquist bin (for even n) shouldn't be doubled — undo:
-    if iseven(n)
-        contrib[end] /= 2.0
-    end
-
-    # Bin frequencies.
-    freqs = (0:nbins-1) .* (Float64(fs) / Float64(n))
-
-    # Integrate power across each band, then convert to dB SPL.
-    levels = fill(-Inf, length(BAND_CENTERS_HZ))
-    for (i, fc) in enumerate(BAND_CENTERS_HZ)
-        fl = fc / _ONE_SIXTH_OCTAVE
-        fu = fc * _ONE_SIXTH_OCTAVE
-        # Avoid bands extending past Nyquist.
-        fu > fs / 2 && (fu = fs / 2)
-        fl >= fu && continue
-        in_band = (freqs .>= fl) .& (freqs .< fu)
-        p2 = sum(contrib[in_band])
-        if p2 > 0
-            levels[i] = 10.0 * log10(p2 / _P_REF^2)
-        end
-    end
-
-    # Replace -Inf placeholders with -60 dB so the downstream kernel treats
-    # them as effectively silent without producing NaN/Inf math.
-    return [isfinite(L) ? L : -60.0 for L in levels]
+# ANSI S1.1-1986 design-bandwidth correction. The nominal third-octave edges
+# `[fc / 2^(1/6), fc * 2^(1/6)]` give the *ideal* brick-wall band. For an
+# Order-N Butterworth approximation, the design passband must be widened so
+# that the noise-equivalent bandwidth equals the ideal third-octave bandwidth.
+# Returns the multiplier `α` such that the design edges are `[fc/α, fc·α]`.
+function _ansi_alpha(order::Int, bands_per_octave::Int=3)
+    b = 1.0 / bands_per_octave
+    # Reference (ideal-band) quotient: fc / (f2 - f1) for f1 = fc/2^(b/2), f2 = fc·2^(b/2).
+    qr = 1.0 / (2.0^(b/2) - 2.0^(-b/2))
+    # Design quotient from ANSI S1.1-1986 eq.9.
+    qd = (π / 2 / order) / sin(π / 2 / order) * qr
+    return (1.0 + sqrt(1.0 + 4.0 * qd^2)) / (2.0 * qd)
 end
 
 """
-    loudness_zwst(signal, fs; field_type=:free, pa_per_unit=1.0) -> ZwickerResult
+    band_levels(signal, fs; pa_per_unit=1.0, order=3) -> Vector{Float64}
+
+Compute one-third-octave band SPL [dB re 20 µPa] for `signal` sampled at `fs`
+Hz. Returns 28 values for the standard band centers 25 Hz – 12.5 kHz.
+
+Each band is filtered with a Butterworth bandpass designed per
+ANSI S1.1-1986 (the same approach MoSQITo uses): the design edges
+`[fc/α, fc·α]` are widened from the nominal third-octave edges by the
+Order-N bandwidth correction `α`, which makes the noise-equivalent
+bandwidth match the ideal band. Default order 3 gives Class-3 ANSI
+behavior; bump to 6 or 8 for tighter selectivity.
+
+`pa_per_unit` scales the raw signal to pascals (default `1.0` assumes Pa).
+Bands whose upper edge exceeds Nyquist are clamped to a silence placeholder.
+
+Filter design is per-call; for batch processing of many signals at the same
+`fs` and `order`, callers may want to cache the SOS objects externally.
+"""
+function band_levels(signal::AbstractVector{<:Real}, fs::Real;
+                     pa_per_unit::Real=1.0, order::Int=_DEFAULT_ORDER)
+    isempty(signal) && throw(ArgumentError("signal is empty"))
+    fs > 0 || throw(ArgumentError("fs must be positive"))
+    order >= 1 || throw(ArgumentError("order must be >= 1"))
+
+    x = Float64.(signal) .* Float64(pa_per_unit)
+    α = _ansi_alpha(order)
+    nyq = Float64(fs) / 2.0
+
+    levels = fill(_SILENCE_DB, length(BAND_CENTERS_HZ))
+    for (i, fc) in enumerate(BAND_CENTERS_HZ)
+        w1 = fc / nyq / α
+        w2 = fc / nyq * α
+        # Skip bands whose design passband doesn't fit between DC and Nyquist.
+        (w1 <= 0.0 || w2 >= 1.0) && continue
+        sos = convert(SecondOrderSections,
+                      digitalfilter(Bandpass(w1, w2), Butterworth(order)))
+        y = filt(sos, x)
+        rms = sqrt(mean(abs2, y))
+        rms > 0 && (levels[i] = 20.0 * log10(rms / _P_REF))
+    end
+    return levels
+end
+
+"""
+    loudness_zwst(signal, fs; field_type=:free, pa_per_unit=1.0, order=3) -> ZwickerResult
 
 Compute ISO 532-1:2017 Method 1 stationary loudness from a time-domain signal.
 Internally: [`band_levels`](@ref) → `ZwickerLoudness.zwicker_loudness`.
-
-See `band_levels` for the smoke-level caveats on the filterbank.
 """
 function loudness_zwst(signal::AbstractVector{<:Real}, fs::Real;
-                       field_type::Symbol=:free, pa_per_unit::Real=1.0)
-    levels = band_levels(signal, fs; pa_per_unit=pa_per_unit)
+                       field_type::Symbol=:free, pa_per_unit::Real=1.0,
+                       order::Int=_DEFAULT_ORDER)
+    levels = band_levels(signal, fs; pa_per_unit=pa_per_unit, order=order)
     return zwicker_loudness(levels; field_type=field_type)
 end
 
 """
-    loudness_zwst(path::AbstractString; field_type=:free, pa_per_unit=1.0) -> ZwickerResult
+    loudness_zwst(path::AbstractString; field_type=:free, pa_per_unit=1.0, order=3) -> ZwickerResult
 
 Read a `.wav` file and compute ISO 532-1:2017 Method 1 stationary loudness.
 Multichannel files are mixed to mono by averaging channels.
 """
 function loudness_zwst(path::AbstractString;
-                       field_type::Symbol=:free, pa_per_unit::Real=1.0)
+                       field_type::Symbol=:free, pa_per_unit::Real=1.0,
+                       order::Int=_DEFAULT_ORDER)
     raw, fs = wavread(path)
-    # Mix to mono if multichannel.
     signal = size(raw, 2) == 1 ? vec(raw) : vec(mean(raw; dims=2))
-    return loudness_zwst(signal, Float64(fs); field_type=field_type, pa_per_unit=pa_per_unit)
+    return loudness_zwst(signal, Float64(fs);
+                         field_type=field_type, pa_per_unit=pa_per_unit, order=order)
 end
 
 end # module
