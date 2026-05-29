@@ -63,6 +63,6 @@ asserts `isapprox(r.loudness, 10.498; rtol=0.05)`.
 
 ## Remaining gaps
 
-(Unchanged from [`2026-05-28-iir-filterbank.md`](2026-05-28-iir-filterbank.md),
-minus Signal 5.) Filter caching, multichannel handling, automatic
-resampling, and low-band decimation are still open.
+None from the original IIR filterbank spec — Signal 5 was the last open
+item. Filter caching, multichannel input handling, low-fs auto-resampling,
+and high-fs numerical stability all landed in follow-up commits on `main`.

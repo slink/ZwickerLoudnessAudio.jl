@@ -1,6 +1,6 @@
 name = "ZwickerLoudnessAudio"
 uuid = "148fbc6a-b99d-460a-8261-c15b9908ee84"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["slink"]
 
 [deps]
