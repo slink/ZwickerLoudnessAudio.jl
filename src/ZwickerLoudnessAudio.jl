@@ -19,6 +19,9 @@ const BAND_CENTERS_HZ = [
 const _P_REF = 2e-5            # Reference acoustic pressure in pascals (20 µPa).
 const _DEFAULT_ORDER = 3       # Filter order matches MoSQITo / ANSI S1.1-1986 default.
 const _SILENCE_DB = -60.0      # Placeholder for bands above Nyquist or numerically silent.
+const _RESAMPLE_TARGET_FS = 48_000.0  # Where low-fs inputs get upsampled to.
+const _MIN_NATIVE_FS = 32_000.0       # Below this, the 12.5 kHz band's design edge
+                                      # crowds Nyquist; we resample instead.
 
 # Memoize the per-band filterbank by (fs, order). digitalfilter+SOS conversion
 # is the bulk of band_levels' work; repeated invocations on the same sample
@@ -56,6 +59,18 @@ function _clear_band_filter_cache!()
         empty!(_BAND_FILTER_CACHE)
     end
     return nothing
+end
+
+# When `fs` is too low for the 28-band model (the 12.5 kHz band's design edge
+# would exceed Nyquist), polyphase-resample to 48 kHz so the filterbank can
+# still be built. The signal's true bandwidth above the input Nyquist is gone
+# forever — upsampling only re-grids what's there — so we warn the caller
+# that bands above the input's Nyquist will be near-silent.
+function _ensure_supported_fs(x::Vector{Float64}, fs::Float64)
+    fs >= _MIN_NATIVE_FS && return x, fs
+    ratio = _RESAMPLE_TARGET_FS / fs
+    @warn "resampling input from $(fs) Hz to $(_RESAMPLE_TARGET_FS) Hz; original Nyquist was $(fs/2) Hz so bands above that will be near-silent"
+    return DSP.resample(x, ratio), _RESAMPLE_TARGET_FS
 end
 
 # ANSI S1.1-1986 design-bandwidth correction. The nominal third-octave edges
@@ -97,7 +112,7 @@ function band_levels(signal::AbstractVector{<:Real}, fs::Real;
     fs > 0 || throw(ArgumentError("fs must be positive"))
     order >= 1 || throw(ArgumentError("order must be >= 1"))
 
-    x = Float64.(signal) .* Float64(pa_per_unit)
+    x, fs = _ensure_supported_fs(Float64.(signal) .* Float64(pa_per_unit), Float64(fs))
     filters = _band_filters(fs, order)
 
     levels = fill(_SILENCE_DB, length(BAND_CENTERS_HZ))
