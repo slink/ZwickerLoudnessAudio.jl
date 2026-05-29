@@ -1,5 +1,6 @@
 using Test
 using FFTW
+using Logging
 using Random
 using Statistics
 using WAV: WAVE_FORMAT_IEEE_FLOAT, wavwrite
@@ -199,6 +200,26 @@ end
         # Out-of-range channels are rejected.
         @test_throws ArgumentError loudness_zwst(samples, fs; channel=3)
         @test_throws ArgumentError loudness_zwst(samples, fs; channel=0)
+    end
+
+    @testset "low fs is auto-resampled" begin
+        # A 16 kHz signal can't carry the 12.5 kHz band's design edge (~14 kHz
+        # for order=3), so band_levels at 16 kHz would silently drop the top
+        # band. With auto-resampling, the result should recover the ISO
+        # Signal 3 reference within tolerance after upsampling to 48 kHz.
+        sig = make_tone(1000, 16_000, 0.5, 60.0)
+        r = @test_logs (:warn, r"resampling"i) loudness_zwst(sig, 16_000)
+        @test isapprox(r.loudness, 4.019; rtol=0.05)
+    end
+
+    @testset "supported fs passes through without resampling" begin
+        # Common CD/DVD rates (≥ 32 kHz) leave the input untouched.
+        sig44 = make_tone(1000, 44_100, 0.5, 60.0)
+        r = @test_logs min_level=Logging.Warn loudness_zwst(sig44, 44_100)
+        @test isapprox(r.loudness, 4.019; rtol=0.05)
+        sig48 = make_tone(1000, 48_000, 0.5, 60.0)
+        r2 = @test_logs min_level=Logging.Warn loudness_zwst(sig48, 48_000)
+        @test isapprox(r2.loudness, 4.019; rtol=0.05)
     end
 
     @testset "multichannel WAV file via channel kwarg" begin
