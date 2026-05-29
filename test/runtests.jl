@@ -202,6 +202,22 @@ end
         @test_throws ArgumentError loudness_zwst(samples, fs; channel=0)
     end
 
+    @testset "high sample rates stay numerically stable" begin
+        # At 192 kHz the 25 Hz band's normalized edge is ~1.3e-4 and at 384 kHz
+        # it's ~6.5e-5 — small enough that direct-form filter coefficients
+        # would lose precision. The SOS cascade representation keeps the
+        # filterbank well-conditioned, and Annex B Signals 2/3/4 round-trip
+        # within tolerance at all these rates. Lock that in.
+        for fs in (96_000, 192_000, 384_000)
+            r2 = loudness_zwst(make_tone(250, fs, 0.5, 80.0), fs)
+            @test isapprox(r2.loudness, 14.655; rtol=0.05)
+            r3 = loudness_zwst(make_tone(1000, fs, 0.5, 60.0), fs)
+            @test isapprox(r3.loudness, 4.019; rtol=0.05)
+            r4 = loudness_zwst(make_tone(4000, fs, 0.5, 40.0), fs)
+            @test isapprox(r4.loudness, 1.549; rtol=0.05)
+        end
+    end
+
     @testset "low fs is auto-resampled" begin
         # A 16 kHz signal can't carry the 12.5 kHz band's design edge (~14 kHz
         # for order=3), so band_levels at 16 kHz would silently drop the top
