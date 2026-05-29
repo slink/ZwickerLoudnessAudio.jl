@@ -1,5 +1,8 @@
 # ZwickerLoudnessAudio.jl
 
+[![CI](https://github.com/slink/ZwickerLoudnessAudio.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/slink/ZwickerLoudnessAudio.jl/actions/workflows/CI.yml)
+[![codecov](https://codecov.io/gh/slink/ZwickerLoudnessAudio.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/slink/ZwickerLoudnessAudio.jl)
+
 Audio-file companion to [ZwickerLoudness.jl](https://github.com/slink/ZwickerLoudness.jl).
 Compute ISO 532-1:2017 Method 1 stationary loudness directly from a `.wav`
 file or a time-domain signal.
