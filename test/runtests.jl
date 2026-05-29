@@ -141,4 +141,40 @@ end
         @test r6.loudness < r3.loudness
     end
 
+    @testset "filter cache: design reused across calls" begin
+        ZwickerLoudnessAudio._clear_band_filter_cache!()
+        @test ZwickerLoudnessAudio._band_filter_cache_size() == 0
+
+        sig = make_tone(1000, 48_000, 0.1, 60.0)
+
+        # First call populates one cache entry.
+        band_levels(sig, 48_000)
+        @test ZwickerLoudnessAudio._band_filter_cache_size() == 1
+
+        # Repeat call with the same (fs, order) does not add a new entry.
+        band_levels(sig, 48_000)
+        @test ZwickerLoudnessAudio._band_filter_cache_size() == 1
+
+        # Different order keys a fresh entry.
+        band_levels(sig, 48_000; order=6)
+        @test ZwickerLoudnessAudio._band_filter_cache_size() == 2
+
+        # Different fs keys a fresh entry.
+        sig2 = make_tone(1000, 44_100, 0.1, 60.0)
+        band_levels(sig2, 44_100)
+        @test ZwickerLoudnessAudio._band_filter_cache_size() == 3
+
+        # Different fs types collapse on the same Float64 key.
+        band_levels(sig2, 44_100.0)
+        @test ZwickerLoudnessAudio._band_filter_cache_size() == 3
+    end
+
+    @testset "filter cache: cached results match uncached" begin
+        sig = make_tone(1000, 48_000, 0.2, 60.0)
+        ZwickerLoudnessAudio._clear_band_filter_cache!()
+        L_first = band_levels(sig, 48_000)
+        L_cached = band_levels(sig, 48_000)
+        @test L_first == L_cached
+    end
+
 end
