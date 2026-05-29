@@ -124,18 +124,52 @@ function loudness_zwst(signal::AbstractVector{<:Real}, fs::Real;
 end
 
 """
-    loudness_zwst(path::AbstractString; field_type=:free, pa_per_unit=1.0, order=3) -> ZwickerResult
+    loudness_zwst(samples::AbstractMatrix, fs; channel=:mono, field_type=:free,
+                  pa_per_unit=1.0, order=3) -> ZwickerResult
+
+Compute stationary loudness from a samples × channels matrix. `channel=:mono`
+(the default) averages all channels into one signal; an integer picks that
+1-based channel.
+"""
+function loudness_zwst(samples::AbstractMatrix{<:Real}, fs::Real;
+                       channel::Union{Symbol,Integer}=:mono,
+                       field_type::Symbol=:free, pa_per_unit::Real=1.0,
+                       order::Int=_DEFAULT_ORDER)
+    signal = _select_channel(samples, channel)
+    return loudness_zwst(signal, Float64(fs);
+                         field_type=field_type, pa_per_unit=pa_per_unit, order=order)
+end
+
+function _select_channel(samples::AbstractMatrix{<:Real},
+                         channel::Union{Symbol,Integer})
+    nch = size(samples, 2)
+    if channel === :mono
+        return nch == 1 ? vec(samples) : vec(mean(samples; dims=2))
+    elseif channel isa Integer
+        (1 <= channel <= nch) || throw(ArgumentError(
+            "channel $channel out of range for $nch-channel input"))
+        return Vector(samples[:, channel])
+    else
+        throw(ArgumentError("channel must be :mono or a 1-based Integer, got $channel"))
+    end
+end
+
+"""
+    loudness_zwst(path::AbstractString; channel=:mono, field_type=:free,
+                  pa_per_unit=1.0, order=3) -> ZwickerResult
 
 Read a `.wav` file and compute ISO 532-1:2017 Method 1 stationary loudness.
-Multichannel files are mixed to mono by averaging channels.
+For multichannel files, `channel=:mono` averages all channels; an integer
+picks one 1-based channel.
 """
 function loudness_zwst(path::AbstractString;
+                       channel::Union{Symbol,Integer}=:mono,
                        field_type::Symbol=:free, pa_per_unit::Real=1.0,
                        order::Int=_DEFAULT_ORDER)
     raw, fs = wavread(path)
-    signal = size(raw, 2) == 1 ? vec(raw) : vec(mean(raw; dims=2))
-    return loudness_zwst(signal, Float64(fs);
-                         field_type=field_type, pa_per_unit=pa_per_unit, order=order)
+    return loudness_zwst(raw, Float64(fs);
+                         channel=channel, field_type=field_type,
+                         pa_per_unit=pa_per_unit, order=order)
 end
 
 end # module
