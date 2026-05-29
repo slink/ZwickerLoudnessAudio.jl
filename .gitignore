@@ -4,4 +4,5 @@ Manifest.toml
 *.jl.mem
 docs/build/
 docs/site/
+docs/specs/
 .worktrees/
