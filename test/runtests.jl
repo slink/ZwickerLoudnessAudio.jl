@@ -200,6 +200,20 @@ end
         # Out-of-range channels are rejected.
         @test_throws ArgumentError loudness_zwst(samples, fs; channel=3)
         @test_throws ArgumentError loudness_zwst(samples, fs; channel=0)
+
+        # Unknown Symbols (anything other than :mono) are rejected.
+        @test_throws ArgumentError loudness_zwst(samples, fs; channel=:left)
+    end
+
+    @testset "bands above input Nyquist resolve to nothing in the cache" begin
+        # At fs=10 kHz, the top several bands' design edges exceed Nyquist
+        # and `_band_filters` stores `nothing` for them. The public API
+        # auto-resamples before this code runs, but the internal contract
+        # still applies if callers invoke `_band_filters` directly.
+        filters = ZwickerLoudnessAudio._band_filters(10_000.0, 3)
+        @test filters[end] === nothing
+        @test any(x -> x === nothing, filters)
+        @test any(x -> x !== nothing, filters)
     end
 
     @testset "high sample rates stay numerically stable" begin
