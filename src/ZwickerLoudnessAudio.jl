@@ -20,6 +20,44 @@ const _P_REF = 2e-5            # Reference acoustic pressure in pascals (20 µPa
 const _DEFAULT_ORDER = 3       # Filter order matches MoSQITo / ANSI S1.1-1986 default.
 const _SILENCE_DB = -60.0      # Placeholder for bands above Nyquist or numerically silent.
 
+# Memoize the per-band filterbank by (fs, order). digitalfilter+SOS conversion
+# is the bulk of band_levels' work; repeated invocations on the same sample
+# rate (e.g. processing many WAV files) reuse the cached designs. Entries are
+# Vectors of length 28; bands above Nyquist hold `nothing`.
+const _BAND_FILTER_CACHE = Dict{Tuple{Float64,Int},Vector{Any}}()
+const _BAND_FILTER_CACHE_LOCK = ReentrantLock()
+
+function _band_filters(fs::Real, order::Int)
+    key = (Float64(fs), order)
+    lock(_BAND_FILTER_CACHE_LOCK) do
+        get!(_BAND_FILTER_CACHE, key) do
+            α = _ansi_alpha(order)
+            nyq = Float64(fs) / 2.0
+            filters = Vector{Any}(undef, length(BAND_CENTERS_HZ))
+            for (i, fc) in enumerate(BAND_CENTERS_HZ)
+                w1 = fc / nyq / α
+                w2 = fc / nyq * α
+                if w1 <= 0.0 || w2 >= 1.0
+                    filters[i] = nothing
+                else
+                    filters[i] = convert(SecondOrderSections,
+                        digitalfilter(Bandpass(w1, w2), Butterworth(order)))
+                end
+            end
+            return filters
+        end
+    end
+end
+
+_band_filter_cache_size() = length(_BAND_FILTER_CACHE)
+
+function _clear_band_filter_cache!()
+    lock(_BAND_FILTER_CACHE_LOCK) do
+        empty!(_BAND_FILTER_CACHE)
+    end
+    return nothing
+end
+
 # ANSI S1.1-1986 design-bandwidth correction. The nominal third-octave edges
 # `[fc / 2^(1/6), fc * 2^(1/6)]` give the *ideal* brick-wall band. For an
 # Order-N Butterworth approximation, the design passband must be widened so
@@ -50,8 +88,8 @@ behavior; bump to 6 or 8 for tighter selectivity.
 `pa_per_unit` scales the raw signal to pascals (default `1.0` assumes Pa).
 Bands whose upper edge exceeds Nyquist are clamped to a silence placeholder.
 
-Filter design is per-call; for batch processing of many signals at the same
-`fs` and `order`, callers may want to cache the SOS objects externally.
+Filter designs are memoized by `(fs, order)`, so repeated calls at the same
+sample rate (e.g. processing many WAV files) reuse the cached SOS objects.
 """
 function band_levels(signal::AbstractVector{<:Real}, fs::Real;
                      pa_per_unit::Real=1.0, order::Int=_DEFAULT_ORDER)
@@ -60,17 +98,11 @@ function band_levels(signal::AbstractVector{<:Real}, fs::Real;
     order >= 1 || throw(ArgumentError("order must be >= 1"))
 
     x = Float64.(signal) .* Float64(pa_per_unit)
-    α = _ansi_alpha(order)
-    nyq = Float64(fs) / 2.0
+    filters = _band_filters(fs, order)
 
     levels = fill(_SILENCE_DB, length(BAND_CENTERS_HZ))
-    for (i, fc) in enumerate(BAND_CENTERS_HZ)
-        w1 = fc / nyq / α
-        w2 = fc / nyq * α
-        # Skip bands whose design passband doesn't fit between DC and Nyquist.
-        (w1 <= 0.0 || w2 >= 1.0) && continue
-        sos = convert(SecondOrderSections,
-                      digitalfilter(Bandpass(w1, w2), Butterworth(order)))
+    for (i, sos) in enumerate(filters)
+        sos === nothing && continue
         y = filt(sos, x)
         rms = sqrt(mean(abs2, y))
         rms > 0 && (levels[i] = 20.0 * log10(rms / _P_REF))
