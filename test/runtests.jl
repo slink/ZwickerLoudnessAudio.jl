@@ -2,6 +2,7 @@ using Test
 using FFTW
 using Random
 using Statistics
+using WAV: WAVE_FORMAT_IEEE_FLOAT, wavwrite
 using ZwickerLoudness: ZwickerResult
 using ZwickerLoudnessAudio
 
@@ -175,6 +176,47 @@ end
         L_first = band_levels(sig, 48_000)
         L_cached = band_levels(sig, 48_000)
         @test L_first == L_cached
+    end
+
+    @testset "multichannel matrix input" begin
+        fs = 48_000
+        L = make_tone(1000, fs, 0.5, 60.0)
+        R = make_tone(4000, fs, 0.5, 40.0)
+        samples = hcat(L, R)
+
+        # :mono default mixes both channels into a mono signal.
+        r_mono = loudness_zwst(samples, fs)
+        @test r_mono isa ZwickerResult
+
+        # channel=1 picks the 1 kHz channel only (≈ ISO Signal 3).
+        r1 = loudness_zwst(samples, fs; channel=1)
+        @test isapprox(r1.loudness, 4.019; rtol=0.05)
+
+        # channel=2 picks the 4 kHz channel only (≈ ISO Signal 4).
+        r2 = loudness_zwst(samples, fs; channel=2)
+        @test isapprox(r2.loudness, 1.549; rtol=0.05)
+
+        # Out-of-range channels are rejected.
+        @test_throws ArgumentError loudness_zwst(samples, fs; channel=3)
+        @test_throws ArgumentError loudness_zwst(samples, fs; channel=0)
+    end
+
+    @testset "multichannel WAV file via channel kwarg" begin
+        fs = 48_000
+        L = make_tone(1000, fs, 0.5, 60.0)
+        R = make_tone(4000, fs, 0.5, 40.0)
+        path = tempname() * ".wav"
+        try
+            wavwrite(hcat(L, R), path; Fs=fs, nbits=32, compression=WAVE_FORMAT_IEEE_FLOAT)
+            r_mono = loudness_zwst(path)
+            @test r_mono isa ZwickerResult
+            r1 = loudness_zwst(path; channel=1)
+            @test isapprox(r1.loudness, 4.019; rtol=0.05)
+            r2 = loudness_zwst(path; channel=2)
+            @test isapprox(r2.loudness, 1.549; rtol=0.05)
+        finally
+            isfile(path) && rm(path)
+        end
     end
 
 end
