@@ -20,12 +20,6 @@ jobs:
         with:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v3
-      # ZwickerLoudness is not yet registered; pull it from its GitHub source
-      # so the project can resolve. Remove this step once ZwickerLoudness is
-      # in the General registry.
-      - name: Add unregistered ZwickerLoudness from GitHub
-        run: |
-          julia --project=. -e 'using Pkg; Pkg.add(url="https://github.com/slink/ZwickerLoudness.jl")'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
