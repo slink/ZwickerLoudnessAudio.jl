@@ -15,13 +15,13 @@ tolerance.
 
 ## Installation
 
-This package is not yet registered. Install from the local checkout:
-
 ```julia
 using Pkg
-Pkg.develop(path="/path/to/ZwickerLoudness.jl")    # parent kernel
-Pkg.develop(path="/path/to/ZwickerLoudnessAudio.jl")
+Pkg.add("ZwickerLoudnessAudio")
 ```
+
+The parent kernel [ZwickerLoudness.jl](https://github.com/slink/ZwickerLoudness.jl)
+is installed automatically as a dependency.
 
 ## Quick start
 
