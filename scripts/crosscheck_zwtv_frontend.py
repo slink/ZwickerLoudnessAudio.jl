@@ -1,0 +1,177 @@
+"""Called by generate_mosqito_zwtv_frontend_crosscheck.jl -- not directly.
+
+Reads {name, fs, field_type, signal} cases from JSON (argv[1]), runs
+MoSQITo's loudness_zwtv @ d990c33f94f1 (Apache-2.0): the private
+`_third_octave_levels` front-end stage (band levels @ 2000 Hz + its own
+linspace-based time axis) AND the public end-to-end API (final N(t)/N5/
+N10/time_axis), on signals synthesized by this package's own generator
+(the SAME tone/tone_burst/am_tone recipe, same three case parameters, as
+ZwickerLoudness.jl's scripts/generate_mosqito_zwtv_crosscheck.jl, so the
+band levels here are directly comparable to that repo's already-vendored
+kernel fixtures -- this repo regenerates its own copy via `uv` rather
+than reading the sibling repo's fixture file at test time, so it stands
+alone). Writes a Julia fixtures file (argv[2]).
+
+Optional argv[3]/argv[4]/argv[5]: absolute path to a *local, uncommitted*
+ISO 532-1 Annex B time-varying .wav file (from a MoSQITo checkout), a
+fixture name, and a provenance string. If given, this end-to-end result
+is ALSO written to argv[2] but with ONLY the final derived numbers (N_t,
+time_axis, N5, N10) -- deliberately excluding band_levels, which (unlike
+a handful of final loudness numbers) retains enough structure to
+reconstitute the copyrighted recording. See ZwickerLoudness.jl's
+.superpowers/sdd/zwtv-pins.md for the licensing reasoning this mirrors.
+The .wav itself is never read by, nor shipped with, this repository's
+committed sources -- it must be supplied from a local MoSQITo checkout
+at generation time.
+
+Front-end/kernel boundary (ZwickerLoudness.jl zwtv-pins.md Sec 1, verified
+against loudness_zwtv.py:111-131):
+    band_levels, band_time_axis, _ = _third_octave_levels(sig, fs)  # FRONT END (this repo)
+    ... (kernel stages: core loudness, nonlinear decay, spreading,
+         temporal weighting, /4 decimation -- ZwickerLoudness.jl) ...
+    N, N_spec, bark_axis, time_axis = loudness_zwtv(sig, fs, field_type)  # public API, end-to-end
+
+time_axis decision (see zwtv-pins.md Sec "Open items for Task 2" / Task 2
+report note 1): the kernel synthesizes an IDEAL 2 ms axis (it never sees
+the original signal/fs). MoSQITo's own `_third_octave_levels.py:259`
+instead builds `linspace(0, len(sig)/fs, n_time)`, dividing the ORIGINAL
+duration into n_time-1 intervals -- a step of ~0.5% longer than the ideal
+2 ms. Decision made here (Task 4): the front end reports MoSQITo's
+linspace-based axis (decimated /4, matching `time_axis` above) rather
+than the kernel's ideal axis, so that `loudness_zwtv`'s output matches
+MoSQITo's own `time_axis` field for fixture parity. This fixture vendors
+BOTH `band_time_axis` (0.5 ms, un-decimated, MoSQITo's front-end value)
+and `time_axis` (2 ms, decimated, MoSQITo's public-API value) so the
+Julia test suite can assert the frontend reproduces the exact MoSQITo
+axis, not just shape/monotonicity.
+"""
+import hashlib
+import json
+import sys
+
+import numpy as np
+from mosqito.sq_metrics import loudness_zwtv
+from mosqito.sq_metrics.loudness.loudness_zwtv._third_octave_levels import (
+    _third_octave_levels,
+)
+
+
+def jl_vec(v):
+    return "[" + ", ".join(repr(float(x)) for x in np.asarray(v).ravel()) + "]"
+
+
+def jl_mat(m):
+    # Julia matrix literal, row-major source (numpy) -> Julia's row-major
+    # literal syntax `[a b c; d e f]` (rows separated by ';', cols by ' ').
+    rows = ["  " + " ".join(repr(float(x)) for x in row) for row in np.asarray(m)]
+    return "[\n" + ";\n".join(rows) + "\n]"
+
+
+def sha256_of(arr):
+    return hashlib.sha256(np.asarray(arr, dtype=np.float64).tobytes()).hexdigest()
+
+
+cases = json.load(open(sys.argv[1]))
+out_path = sys.argv[2]
+
+case_entries = []
+
+for c in cases:
+    name = c["name"]
+    fs = float(c["fs"])
+    field_type = c["field_type"]
+    sig = np.array(c["signal"], dtype=np.float64)
+
+    band_levels, band_time_axis, _freq = _third_octave_levels(sig, fs)
+    N, N_spec, _bark_axis, time_axis = loudness_zwtv(sig, fs, field_type)
+
+    # Sanity: the public API's time_axis really is the front end's
+    # band_time_axis decimated by 4 (loudness_zwtv.py:131) -- if this ever
+    # stops holding, the boundary pin in zwtv-pins.md needs revisiting.
+    assert np.array_equal(time_axis, band_time_axis[::4]), (
+        f"{name}: public API time_axis diverges from band_time_axis[::4]"
+    )
+
+    n5 = float(np.percentile(N, 95, method="linear"))
+    n10 = float(np.percentile(N, 90, method="linear"))
+
+    case_entries.append(
+        f"""    (
+        name = "{name}",
+        fs = {fs!r},
+        field_type = :{field_type},
+        band_levels_sha256 = "{sha256_of(band_levels)}",
+        band_levels = {jl_mat(band_levels)},
+        band_time_axis = {jl_vec(band_time_axis)},
+        N_t = {jl_vec(N)},
+        time_axis = {jl_vec(time_axis)},
+        N5_iso = {n5!r},
+        N10_iso = {n10!r},
+    ),"""
+    )
+
+header = '''# AUTOGENERATED by scripts/generate_mosqito_zwtv_frontend_crosscheck.jl --
+# do not edit. (case, fs, field_type, band_levels [28 x nblocks @ 2000 Hz,
+# _third_octave_levels output], band_time_axis [s, 0.5 ms un-decimated,
+# MoSQITo's own linspace(0, len(sig)/fs, n_time)], N_t [sone, end-to-end
+# public loudness_zwtv], time_axis [s, 2 ms, band_time_axis[::4]], N5_iso/
+# N10_iso [sone, ISO/DIN type-7 percentile]) computed by MoSQITo
+# loudness_zwtv @ d990c33f94f1 (Apache-2.0), on signals synthesized by
+# this package's own generator script -- any disagreement is a
+# transcription bug. Signals/parameters are the SAME as
+# ZwickerLoudness.jl's zwtv_kernel_fixtures.jl cases, so band_levels here
+# is directly comparable to that repo's already-vendored kernel fixture
+# (regenerated independently here rather than read from the sibling
+# repo, so this package's test suite stands alone).
+const ZWTV_FRONTEND_FIXTURE_CASES = [
+'''
+
+annexb_block = ""
+if len(sys.argv) > 3:
+    wav_path, annexb_name, provenance = sys.argv[3], sys.argv[4], sys.argv[5]
+    from mosqito.utils import load as mosqito_load
+
+    # Calibration factor transcribed from MoSQITo's own Annex B validation
+    # driver (validations/sq_metrics/loudness_zwtv/validation_loudness_zwtv.py:191),
+    # the same one ZwickerLoudness.jl's Task 1/3 rigs used, so results are
+    # directly comparable across the two repos' Annex B fixtures.
+    sig, fs = mosqito_load(wav_path, wav_calib=2 * 2**0.5)
+    N_annexb, _N_spec_annexb, _bark_annexb, time_annexb = loudness_zwtv(
+        sig, float(fs), "free"
+    )
+
+    n5_annexb = float(np.percentile(N_annexb, 95, method="linear"))
+    n10_annexb = float(np.percentile(N_annexb, 90, method="linear"))
+    coarse = 25
+    annexb_block = f"""
+# ISO 532-1 Annex B time-varying conformance case, DERIVED NUMBERS ONLY.
+# Provenance: {provenance}
+# The underlying .wav is ISO-copyrighted material MoSQITo redistributes
+# under its own Apache-2.0 grant, which cannot confer rights ISO has not
+# granted -- so the recording itself is never read by, nor shipped with,
+# this repository. Only the final loudness curve (coarsened {coarse}x; N5/
+# N10 below are exact, computed on the full series) and its ISO/DIN
+# percentiles (a highly-compressed perceptual summary, not a
+# reconstruction of the recording) are vendored here, matching the
+# posture ZwickerLoudness.jl's ZWTV_ANNEXB_DERIVED fixture already takes.
+# band_levels is deliberately withheld for this case.
+const ZWTV_ANNEXB_FRONTEND_DERIVED = (
+    name = "{annexb_name}",
+    fs = {float(fs)!r},
+    N_t_coarse = {jl_vec(N_annexb[::coarse])},
+    time_axis_coarse = {jl_vec(time_annexb[::coarse])},
+    coarse_factor = {coarse},
+    n_full = {len(N_annexb)},
+    N5_iso = {n5_annexb!r},
+    N10_iso = {n10_annexb!r},
+)
+"""
+
+with open(out_path, "w") as f:
+    f.write(header)
+    f.write("\n".join(case_entries))
+    f.write("\n]\n")
+    f.write(annexb_block)
+
+print(f"wrote {out_path}: {len(cases)} cases"
+      + (", + Annex B derived case" if annexb_block else ""))
