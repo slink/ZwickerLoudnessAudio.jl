@@ -187,4 +187,6 @@ function loudness_zwst(path::AbstractString;
                          pa_per_unit=pa_per_unit, order=order)
 end
 
+include(joinpath(@__DIR__, "zwtv_frontend.jl"))
+
 end # module

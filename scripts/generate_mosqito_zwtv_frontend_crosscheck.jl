@@ -9,58 +9,15 @@
 # (band_levels, band_time_axis, N_t, time_axis, N5/N10).
 # Requires uv and network on first run.
 # Usage: julia scripts/generate_mosqito_zwtv_frontend_crosscheck.jl
-using Statistics: std
-
-# Calibrated pure tone, `duration` seconds at `fc` Hz, `spl` dB re 20 uPa.
-# Amplitude calibration transcribed from MoSQITo utils/am_sine_generator.py
-# @ d990c33f94f1 (std-normalization, not RMS -- ddof=0); identical to
-# ZwickerLoudness.jl's zwtv rig generator, reproduced here so this repo's
-# fixture pipeline stands alone.
-function tone(fs::Real, fc::Real, duration::Real, spl::Real)
-    n = round(Int, duration * fs)
-    t = (0:n-1) ./ fs
-    y = sin.(2π * fc .* t)
-    A = 2e-5 * 10.0^(spl / 20)
-    return y .* (A / std(y; corrected=false))
-end
-
-# Tone burst: `burst_duration` s of a `spl`-calibrated tone (level defined
-# over the burst itself, not the padded silence) starting at `burst_start`
-# s within a `total_duration` s silent buffer.
-function tone_burst(fs::Real, fc::Real, total_duration::Real, burst_duration::Real,
-                     burst_start::Real, spl::Real)
-    n_total = round(Int, total_duration * fs)
-    n_burst = round(Int, burst_duration * fs)
-    i0 = round(Int, burst_start * fs)
-    burst = tone(fs, fc, burst_duration, spl)
-    sig = zeros(n_total)
-    sig[i0+1:i0+n_burst] .= burst
-    return sig
-end
-
-# Amplitude-modulated tone: (1 + sin(2*pi*fm*t)) * sin(2*pi*fc*t), calibrated
-# to `spl` dB by std-normalization (same convention as `tone`/am_sine).
-function am_tone(fs::Real, fc::Real, fm::Real, duration::Real, spl::Real)
-    n = round(Int, duration * fs)
-    t = (0:n-1) ./ fs
-    xmod = sin.(2π * fm .* t)
-    xc = sin.(2π * fc .* t)
-    y = (1 .+ xmod) .* xc
-    A = 2e-5 * 10.0^(spl / 20)
-    return y .* (A / std(y; corrected=false))
-end
+include(joinpath(@__DIR__, "..", "test", "support", "zwtv_generators.jl"))
 
 # (name, fs, field_type, signal) -- same 3 cases/params as
 # ZwickerLoudness.jl's kernel rig, so band_levels here is directly
 # comparable to that repo's already-vendored ZWTV_KERNEL_FIXTURE_CASES.
-cases = [
-    ("steady_tone_1k_60db", 48000.0, "free",
-        tone(48000, 1000.0, 0.10, 60.0)),
-    ("tone_burst_1k_70db_30ms", 48000.0, "free",
-        tone_burst(48000, 1000.0, 0.15, 0.03, 0.06, 70.0)),
-    ("am_tone_1k_10hz_65db", 48000.0, "free",
-        am_tone(48000, 1000.0, 10.0, 0.20, 65.0)),
-]
+# `test/support/zwtv_generators.jl` is also included directly by
+# test/test_zwtv_frontend.jl, so both the fixture and the test suite
+# regenerate byte-identical signals from one source.
+cases = [(name, fs, string(field_type), sig) for (name, fs, field_type, sig) in zwtv_generator_cases()]
 
 jsonvec(v) = string("[", join(string.(v), ","), "]")
 tmp = tempname() * ".json"

@@ -2,10 +2,33 @@ using Test
 using FFTW
 using Logging
 using Random
+using SHA
 using Statistics
-using WAV: WAVE_FORMAT_IEEE_FLOAT, wavwrite
-using ZwickerLoudness: ZwickerResult
+using WAV: WAVE_FORMAT_IEEE_FLOAT, wavread, wavwrite
+using ZwickerLoudness: ZwickerResult, ZwickerTimeVaryingResult
 using ZwickerLoudnessAudio
+
+include(joinpath(@__DIR__, "support", "zwtv_generators.jl"))
+
+# Guarded include -- Julia 1.10's const-reinclude landmine means
+# re-including this file within the same session throws; `isdefined`
+# makes this safe if runtests.jl is re-run interactively.
+if !isdefined(Main, :ZWTV_FRONTEND_FIXTURE_CASES)
+    include(joinpath(@__DIR__, "fixtures", "zwtv_frontend_fixtures.jl"))
+end
+
+# SHA-256 of a matrix's bytes in ROW-MAJOR order (matches numpy's default
+# `.tobytes()` on the (28, nblocks) array used to generate `band_levels_sha256`
+# in the fixture file -- Julia matrices are column-major internally, so this
+# must iterate row-then-column explicitly, not rely on `vec`/`reshape`).
+function _sha256_rowmajor(m::AbstractMatrix{Float64})
+    io = IOBuffer()
+    nrows, ncols = size(m)
+    for i in 1:nrows, j in 1:ncols
+        write(io, m[i, j])
+    end
+    return bytes2hex(sha256(take!(io)))
+end
 
 # Generate a sinusoidal stimulus at frequency `f` Hz, sampled at `fs`, of
 # duration `dur` seconds, scaled so its RMS pressure corresponds to `level_db`
@@ -267,6 +290,142 @@ end
             @test isapprox(r2.loudness, 1.549; rtol=0.05)
         finally
             isfile(path) && rm(path)
+        end
+    end
+
+    # ============================================================ #
+    #  ISO 532-1:2017 clause 6 ("Method for time-varying sounds",
+    #  colloquially "Method 2" -- NOT ISO 532-2, the unrelated
+    #  Moore-Glasberg standard): loudness_zwtv front end.
+    # ============================================================ #
+
+    @testset "zwtv fixture band_levels integrity (sha256)" begin
+        for case in ZWTV_FRONTEND_FIXTURE_CASES
+            @test _sha256_rowmajor(case.band_levels) == case.band_levels_sha256
+        end
+    end
+
+    @testset "_third_octave_levels vs MoSQITo fixture" begin
+        for (name, fs, field_type, sig) in zwtv_generator_cases()
+            case = only(filter(c -> c.name == name, ZWTV_FRONTEND_FIXTURE_CASES))
+            band_levels, band_time_axis =
+                ZwickerLoudnessAudio._third_octave_levels(Float64.(sig), Float64(fs))
+            @test size(band_levels) == size(case.band_levels)
+            # Measured deviation (transcription class); rtol=1e-9 per the
+            # project's "start rtol 1e-9, measure" convention, not loosened.
+            @test isapprox(band_levels, case.band_levels; rtol=1e-9, atol=1e-9)
+            @test isapprox(band_time_axis, case.band_time_axis; rtol=1e-9, atol=1e-12)
+        end
+    end
+
+    @testset "loudness_zwtv end-to-end vs MoSQITo fixture" begin
+        for (name, fs, field_type, sig) in zwtv_generator_cases()
+            case = only(filter(c -> c.name == name, ZWTV_FRONTEND_FIXTURE_CASES))
+            result = loudness_zwtv(sig, fs; field_type=field_type)
+            @test result isa ZwickerTimeVaryingResult
+            @test length(result.loudness_over_time) == length(case.N_t)
+            @test isapprox(result.loudness_over_time, case.N_t; rtol=1e-9, atol=1e-9)
+            # time_axis decision (see loudness_zwtv's docstring): report
+            # MoSQITo's own linspace-based axis, not the kernel's idealized
+            # one -- this asserts that decision holds to fixture parity.
+            @test isapprox(result.time_axis, case.time_axis; rtol=1e-9, atol=1e-12)
+            @test isapprox(result.N5, case.N5_iso; rtol=1e-6, atol=1e-6)
+            @test isapprox(result.N10, case.N10_iso; rtol=1e-6, atol=1e-6)
+            @test size(result.specific_loudness) == (240, length(case.N_t))
+        end
+    end
+
+    @testset "fs != 48000 throws ArgumentError" begin
+        e = @test_throws ArgumentError loudness_zwtv(randn(1000), 44_100)
+        @test occursin("resample", lowercase(e.value.msg))
+        @test_throws ArgumentError loudness_zwtv(randn(1000), 48_000.0 - 1)
+    end
+
+    @testset "empty signal throws (zwtv)" begin
+        @test_throws ArgumentError loudness_zwtv(Float64[], 48_000)
+    end
+
+    @testset "field_type kwarg is honored (zwtv)" begin
+        sig = zwtv_tone(48_000, 1000.0, 0.10, 60.0)
+        rf = loudness_zwtv(sig, 48_000; field_type=:free)
+        rd = loudness_zwtv(sig, 48_000; field_type=:diffuse)
+        @test rf.N5 != rd.N5
+    end
+
+    @testset "multichannel matrix input (zwtv)" begin
+        fs = 48_000
+        L = zwtv_tone(fs, 1000.0, 0.10, 60.0)
+        R = zwtv_tone(fs, 4000.0, 0.10, 40.0)
+        samples = hcat(L, R)
+
+        r_mono = loudness_zwtv(samples, fs)
+        @test r_mono isa ZwickerTimeVaryingResult
+
+        r1 = loudness_zwtv(samples, fs; channel=1)
+        r_direct = loudness_zwtv(L, fs)
+        @test r1.loudness_over_time == r_direct.loudness_over_time
+
+        @test_throws ArgumentError loudness_zwtv(samples, fs; channel=3)
+        @test_throws ArgumentError loudness_zwtv(samples, fs; channel=0)
+        @test_throws ArgumentError loudness_zwtv(samples, fs; channel=:left)
+    end
+
+    @testset "wav entry point (zwtv)" begin
+        fs = 48_000
+        L = zwtv_tone(fs, 1000.0, 0.10, 60.0)
+        R = zwtv_tone(fs, 4000.0, 0.10, 40.0)
+        path = tempname() * ".wav"
+        try
+            wavwrite(hcat(L, R), path; Fs=fs, nbits=32, compression=WAVE_FORMAT_IEEE_FLOAT)
+            r_mono = loudness_zwtv(path)
+            @test r_mono isa ZwickerTimeVaryingResult
+            r1 = loudness_zwtv(path; channel=1)
+            r_direct = loudness_zwtv(L, fs)
+            # 32-bit float wav round-trip, not bit-exact vs the in-memory
+            # Float64 signal -- loosened accordingly (measured ~1e-7 class).
+            @test isapprox(r1.loudness_over_time, r_direct.loudness_over_time; rtol=1e-5)
+            r2 = loudness_zwtv(path; channel=2)
+            @test r2.N5 != r1.N5
+        finally
+            isfile(path) && rm(path)
+        end
+    end
+
+    @testset "ISO 532-1:2017 Annex B.4 end-to-end conformance (zwtv, self-skip)" begin
+        # Mirrors ZwickerLoudness.jl's kernel-repo Annex B conformance test,
+        # but simpler: this package's front end is pure Julia (no `uv`/
+        # MoSQITo subprocess needed at test time), so we just read the
+        # ISO-copyrighted .wav locally (never vendored -- see
+        # test/fixtures/NOTICE.md) and run OUR OWN end-to-end loudness_zwtv
+        # on it, comparing against the vendored MoSQITo-computed derived
+        # numbers. Self-skips (never fails) whenever that local reference
+        # material is absent, which is always true in CI.
+        annexb_wav = joinpath(
+            "/tmp", "mosqito-pinned", "validations", "sq_metrics", "loudness_zwtv",
+            "input", "ISO_532-1", "Annex B.4",
+            "Test signal 6 (tone 250 Hz 30 dB - 80 dB).wav",
+        )
+        if !isfile(annexb_wav)
+            @test_skip "Annex B end-to-end conformance skipped: local MoSQITo reference " *
+                "material not found at \"$annexb_wav\". Clone MoSQITo @ d990c33f94f1 to " *
+                "/tmp/mosqito-pinned to enable (the .wav itself is never vendored in this " *
+                "repository -- see test/fixtures/NOTICE.md). CI intentionally lacks this " *
+                "material and stays green via this skip."
+        else
+            raw, fs = wavread(annexb_wav)
+            # Calibration factor matches MoSQITo's own Annex B validation
+            # driver (wav_calib = 2*sqrt(2)). WAV.jl's default
+            # `format="double"` already normalizes signed PCM samples the
+            # same way MoSQITo's scipy-based loader does (divide by
+            # 2^(nbits-1) - 1), so no extra rescaling beyond pa_per_unit
+            # is needed.
+            result = loudness_zwtv(raw, Float64(fs); channel=1, pa_per_unit=2 * sqrt(2))
+            coarse = ZWTV_ANNEXB_FRONTEND_DERIVED.coarse_factor
+            N_t_coarse = result.loudness_over_time[1:coarse:end]
+            @test length(result.loudness_over_time) == ZWTV_ANNEXB_FRONTEND_DERIVED.n_full
+            @test isapprox(N_t_coarse, ZWTV_ANNEXB_FRONTEND_DERIVED.N_t_coarse; rtol=1e-9, atol=1e-9)
+            @test isapprox(result.N5, ZWTV_ANNEXB_FRONTEND_DERIVED.N5_iso; rtol=1e-9, atol=1e-9)
+            @test isapprox(result.N10, ZWTV_ANNEXB_FRONTEND_DERIVED.N10_iso; rtol=1e-9, atol=1e-9)
         end
     end
 

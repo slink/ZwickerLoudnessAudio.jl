@@ -12,14 +12,15 @@ ZwickerLoudness = "08868560-fde5-4d5c-a6ad-ef47176ecf8c"
 [compat]
 DSP = "0.8.5"
 WAV = "1"
-ZwickerLoudness = "0.2"
+ZwickerLoudness = "0.3"
 julia = "1.10"
 
 [extras]
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["FFTW", "Logging", "Random", "Test"]
+test = ["FFTW", "Logging", "Random", "SHA", "Test"]
