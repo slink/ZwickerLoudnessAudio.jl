@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/slink/ZwickerLoudnessAudio.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/slink/ZwickerLoudnessAudio.jl/actions/workflows/CI.yml)
 [![codecov](https://codecov.io/gh/slink/ZwickerLoudnessAudio.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/slink/ZwickerLoudnessAudio.jl)
+[![DOI](https://zenodo.org/badge/1253784080.svg)](https://zenodo.org/badge/latestdoi/1253784080)
 
 Audio-file companion to [ZwickerLoudness.jl](https://github.com/slink/ZwickerLoudness.jl).
 Compute ISO 532-1:2017 loudness directly from a `.wav` file or a
