@@ -75,8 +75,10 @@ end
 
 # ANSI S1.1-1986 design-bandwidth correction. The nominal third-octave edges
 # `[fc / 2^(1/6), fc * 2^(1/6)]` give the *ideal* brick-wall band. For an
-# Order-N Butterworth approximation, the design passband must be widened so
-# that the noise-equivalent bandwidth equals the ideal third-octave bandwidth.
+# Order-N Butterworth approximation the noise-equivalent bandwidth exceeds the
+# -3 dB passband, so the design passband must be *narrowed* until its
+# noise-equivalent bandwidth equals the ideal third-octave bandwidth (order 3
+# gives α ≈ 1.1167 < 2^(1/6) ≈ 1.1225; α → 2^(1/6) as order → ∞).
 # Returns the multiplier `α` such that the design edges are `[fc/α, fc·α]`.
 function _ansi_alpha(order::Int, bands_per_octave::Int=3)
     b = 1.0 / bands_per_octave
@@ -95,9 +97,10 @@ Hz. Returns 28 values for the standard band centers 25 Hz – 12.5 kHz.
 
 Each band is filtered with a Butterworth bandpass designed per
 ANSI S1.1-1986 (the same approach MoSQITo uses): the design edges
-`[fc/α, fc·α]` are widened from the nominal third-octave edges by the
-Order-N bandwidth correction `α`, which makes the noise-equivalent
-bandwidth match the ideal band. Default order 3 gives Class-3 ANSI
+`[fc/α, fc·α]` are narrowed from the nominal third-octave edges
+`[fc/2^(1/6), fc·2^(1/6)]` by the Order-N bandwidth correction `α < 2^(1/6)`,
+which makes the finite-order filter's noise-equivalent bandwidth match the
+ideal band. Default order 3 gives Class-3 ANSI
 behavior; bump to 6 or 8 for tighter selectivity.
 
 `pa_per_unit` scales the raw signal to pascals (default `1.0` assumes Pa).

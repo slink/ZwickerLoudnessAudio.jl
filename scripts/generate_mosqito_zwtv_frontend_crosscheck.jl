@@ -1,9 +1,9 @@
 # One-time generator for test/fixtures/zwtv_frontend_fixtures.jl.
 # Synthesizes the SAME deterministic time-varying signals as
 # ZwickerLoudness.jl's scripts/generate_mosqito_zwtv_crosscheck.jl (same
-# tone/tone_burst/am_tone recipe and case parameters -- see that repo's
-# .superpowers/sdd/zwtv-pins.md for the verified kernel/front-end
-# boundary), hands them to MoSQITo (via uv, both the private front-end
+# tone/tone_burst/am_tone recipe and case parameters -- the kernel/front-end
+# boundary is MoSQITo's private `_third_octave_levels` output, documented in
+# test/fixtures/NOTICE.md), hands them to MoSQITo (via uv, both the private front-end
 # stage `_third_octave_levels` and the public `loudness_zwtv` API), and
 # vendors the front-end-level fixtures Task 4 TDDs against: per-case
 # (band_levels, band_time_axis, N_t, time_axis, N5/N10).
@@ -15,7 +15,7 @@ include(joinpath(@__DIR__, "..", "test", "support", "zwtv_generators.jl"))
 # ZwickerLoudness.jl's kernel rig, so band_levels here is directly
 # comparable to that repo's already-vendored ZWTV_KERNEL_FIXTURE_CASES.
 # `test/support/zwtv_generators.jl` is also included directly by
-# test/test_zwtv_frontend.jl, so both the fixture and the test suite
+# test/runtests.jl, so both the fixture and the test suite
 # regenerate byte-identical signals from one source.
 cases = [(name, fs, string(field_type), sig) for (name, fs, field_type, sig) in zwtv_generator_cases()]
 

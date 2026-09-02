@@ -13,7 +13,7 @@ For the stationary method, the third-octave filterbank is a per-band
 Butterworth bandpass designed per ANSI S1.1-1986 (matching the approach
 used by [MoSQITo](https://github.com/Eomys/MoSQITo)).
 Default order 3 reproduces all four ISO 532-1 Annex B reference signals
-(two tones, one broadband tone, and pink noise) within the standard's ±5%
+(pure tones at 250 Hz, 1 kHz and 4 kHz, plus pink noise) within the standard's ±5%
 tolerance. The time-varying method instead uses the standard's own Annex A
 filter design (see below).
 

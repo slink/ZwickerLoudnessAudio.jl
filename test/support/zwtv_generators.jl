@@ -1,6 +1,6 @@
 # Deterministic time-varying test signal generators, shared between
 # scripts/generate_mosqito_zwtv_frontend_crosscheck.jl (fixture generation)
-# and test/test_zwtv_frontend.jl (regenerating the same signals to feed
+# and test/runtests.jl (regenerating the same signals to feed
 # this package's own `loudness_zwtv`/`_third_octave_levels`). Identical to
 # ZwickerLoudness.jl's kernel-repo rig generator (confirmed byte-identical
 # via matching band_levels_sha256 across both repos' fixtures) -- kept in
