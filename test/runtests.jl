@@ -430,3 +430,5 @@ end
     end
 
 end
+
+include("test_aqua.jl")
