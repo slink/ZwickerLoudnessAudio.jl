@@ -391,26 +391,26 @@ end
         end
     end
 
-    @testset "ISO 532-1:2017 Annex B.4 end-to-end conformance (zwtv, self-skip)" begin
+    @testset "ISO 532-1:2017 Annex B.4 end-to-end conformance (zwtv)" begin
         # Mirrors ZwickerLoudness.jl's kernel-repo Annex B conformance test,
         # but simpler: this package's front end is pure Julia (no `uv`/
         # MoSQITo subprocess needed at test time), so we just read the
         # ISO-copyrighted .wav locally (never vendored -- see
         # test/fixtures/NOTICE.md) and run OUR OWN end-to-end loudness_zwtv
         # on it, comparing against the vendored MoSQITo-computed derived
-        # numbers. Self-skips (never fails) whenever that local reference
-        # material is absent, which is always true in CI.
+        # numbers. Logs a visible skip (never fails) whenever that local
+        # reference material is absent; CI provisions it on ubuntu/macos
+        # (see .github/workflows/CI.yml) so the gate runs there.
         annexb_wav = joinpath(
             "/tmp", "mosqito-pinned", "validations", "sq_metrics", "loudness_zwtv",
             "input", "ISO_532-1", "Annex B.4",
             "Test signal 6 (tone 250 Hz 30 dB - 80 dB).wav",
         )
         if !isfile(annexb_wav)
-            @test_skip "Annex B end-to-end conformance skipped: local MoSQITo reference " *
+            @info "Annex B end-to-end conformance skipped: local MoSQITo reference " *
                 "material not found at \"$annexb_wav\". Clone MoSQITo @ d990c33f94f1 to " *
                 "/tmp/mosqito-pinned to enable (the .wav itself is never vendored in this " *
-                "repository -- see test/fixtures/NOTICE.md). CI intentionally lacks this " *
-                "material and stays green via this skip."
+                "repository -- see test/fixtures/NOTICE.md)."
         else
             raw, fs = wavread(annexb_wav)
             # Calibration factor matches MoSQITo's own Annex B validation

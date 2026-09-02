@@ -34,11 +34,16 @@ by this package's own generator (pure/AM tones).
   (`validations/sq_metrics/loudness_zwtv/input/ISO_532-1/Annex
   B.4/Test signal 6 (tone 250 Hz 30 dB - 80 dB).wav`). The underlying
   `.wav` is ISO-copyrighted material; MoSQITo's Apache-2.0 grant does not
-  extend to it, so it is never read by or shipped with this repository --
-  see ZwickerLoudness.jl's `.superpowers/sdd/zwtv-pins.md` for the full
-  licensing reasoning, which this repo's fixture generation mirrors
-  exactly (same signal, same calibration factor, same coarsening). Only
-  MoSQITo's *computed results* on that signal are vendored here. Byte-
+  extend to it, so it is never shipped with this repository. The Annex B
+  conformance testset in `test/runtests.jl` reads it from a local MoSQITo
+  checkout at `/tmp/mosqito-pinned` when one is present (CI provisions
+  one on ubuntu/macos) and otherwise logs a visible skip. Only *derived*
+  numbers are vendored: the final loudness curve is coarsened 25x and
+  `band_levels` is deliberately excluded, because the un-coarsened band
+  levels retain enough structure to reconstitute the recording, whereas
+  a handful of final loudness values do not. This mirrors the kernel
+  repo's (ZwickerLoudness.jl) fixture generation exactly (same signal,
+  same calibration factor `2*sqrt(2)`, same coarsening). Byte-
   identical to the kernel repo's `ZWTV_ANNEXB_DERIVED.N_t_coarse`/
   `time_axis_coarse`, confirming the two repos' Annex B pipelines agree
   end-to-end.

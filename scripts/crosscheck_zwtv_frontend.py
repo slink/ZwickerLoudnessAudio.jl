@@ -18,8 +18,8 @@ fixture name, and a provenance string. If given, this end-to-end result
 is ALSO written to argv[2] but with ONLY the final derived numbers (N_t,
 time_axis, N5, N10) -- deliberately excluding band_levels, which (unlike
 a handful of final loudness numbers) retains enough structure to
-reconstitute the copyrighted recording. See ZwickerLoudness.jl's
-.superpowers/sdd/zwtv-pins.md for the licensing reasoning this mirrors.
+reconstitute the copyrighted recording. The licensing reasoning is
+spelled out in test/fixtures/NOTICE.md (section ZWTV_ANNEXB_FRONTEND_DERIVED).
 The .wav itself is never read by, nor shipped with, this repository's
 committed sources -- it must be supplied from a local MoSQITo checkout
 at generation time.
